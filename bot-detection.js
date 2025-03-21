@@ -1,102 +1,83 @@
-(() => {
-    let botFlags = {
-        linearMovement: false,
-        rapidScroll: false,
-        abnormalKeystrokes: false,
-        vpnDetected: false,
-        multipleFlags: false
-    };
 
-    let movementData = [];
-    let lastScrollTime = 0;
-    let lastKeyTime = 0;
+// Array to store the mouse movement data
+let mouseMovements = [];
+
+// Function to handle mouse movement
+function handleMouseMove(event) {
+  const movementData = {
+    x: event.clientX, // X position relative to viewport
+    y: event.clientY, // Y position relative to viewport
+    timestamp: Date.now(), // Capture the timestamp
+  };
+
+  // Add the movement data to the array
+  mouseMovements.push(movementData);
+
+  // Optional: Log to console for testing
+  axios
+    .post("http://localhost:5500/save-mouse-movements", mouseMovements)
+    .then((response) => {
+      console.log("Data successfully sent:", mouseMovements);
+    })
+    .catch((error) => {
+      console.error("Error sending data:", error);
+    });
+}
+
+// Add event listener for mouse movement
+window.addEventListener("mousemove", handleMouseMove);
+
+// Optional: Save to localStorage every 5 seconds (for client-side persistence)
+setInterval(() => {
+  localStorage.setItem("mouseMovements", JSON.stringify(mouseMovements));
+}, 5000);
+
+
+// Wait for the page to fully load
+// Wait for the page to fully load
+
+
+let lastX = 0, lastY = 0;
+let movements = [];
+
+document.addEventListener("mousemove", (event) => {
+    let { clientX, clientY } = event;
+
+    // Calculate movement distance
+    let dx = Math.abs(clientX - lastX);
+    let dy = Math.abs(clientY - lastY);
     
-    // Use a worker for intensive calculations
-    let workerCode = `
-        self.onmessage = function(event) {
-            let { type, data } = event.data;
+    // Store movement data
+    movements.push({ dx, dy });
 
-            if (type === "analyzeMovement") {
-                let straightLineMoves = 0;
-                for (let i = 1; i < data.length; i++) {
-                    let dx = Math.abs(data[i].x - data[i - 1].x);
-                    let dy = Math.abs(data[i].y - data[i - 1].y);
-                    if ((dx === 0 || dy === 0 || dx / dy > 10 || dy / dx > 10) && dx + dy > 2) {
-                        straightLineMoves++;
-                    }
-                }
-                if (straightLineMoves > 3) postMessage({ type: "linearMovement", detected: true });
-            }
-        };
-    `;
-    
-    let workerBlob = new Blob([workerCode], { type: "application/javascript" });
-    let botWorker = new Worker(URL.createObjectURL(workerBlob));
+    // Keep only the last 50 movements
+    if (movements.length > 50) movements.shift();
 
-    botWorker.onmessage = (event) => {
-        if (event.data.type === "linearMovement" && event.data.detected) {
-            botFlags.linearMovement = true;
-            checkBot();
-        }
-    };
+    // Analyze bot-like patterns
+    detectBotMovement();
 
-    // Optimized Mouse Movement Detection
-    document.addEventListener("mousemove", (event) => {
-        movementData.push({ x: event.clientX, y: event.clientY });
-        if (movementData.length > 5) {
-            botWorker.postMessage({ type: "analyzeMovement", data: movementData });
-            movementData = []; // Reset data
-        }
-    });
+    lastX = clientX;
+    lastY = clientY;
+});
 
-    // Optimized Scroll Detection
-    document.addEventListener("scroll", () => {
-        let now = performance.now();
-        if (now - lastScrollTime < 50) {
-            botFlags.rapidScroll = true;
-            checkBot();
-        }
-        lastScrollTime = now;
-    });
+function detectBotMovement() {
+    if (movements.length < 20) return;
 
-    // Optimized Keystroke Detection
-    document.addEventListener("keydown", () => {
-        let now = performance.now();
-        if (lastKeyTime !== 0) {
-            let interval = now - lastKeyTime;
-            if (interval < 30) { 
-                botFlags.abnormalKeystrokes = true;
-                checkBot();
-            }
-        }
-        lastKeyTime = now;
-    });
+    let totalDx = 0, totalDy = 0;
+    let samePattern = true;
 
-    // VPN Detection via External API
-    async function detectVPN() {
-        try {
-            let res = await fetch("https://api.ipify.org?format=json");
-            let { ip } = await res.json();
-            
-            let vpnCheck = await fetch(`https://vpnapi.io/api/${ip}?key=YOUR_VPNAPI_KEY`);
-            let vpnData = await vpnCheck.json();
+    for (let i = 1; i < movements.length; i++) {
+        totalDx += movements[i].dx;
+        totalDy += movements[i].dy;
 
-            if (vpnData.security.vpn || vpnData.security.proxy) {
-                botFlags.vpnDetected = true;
-                checkBot();
-            }
-        } catch (error) {
-            console.error("VPN detection failed", error);
+        if (movements[i].dx !== movements[i - 1].dx || movements[i].dy !== movements[i - 1].dy) {
+            samePattern = false;
         }
     }
-    detectVPN();
 
-    // Final bot evaluation and alert
-    function checkBot() {
-        let activeFlags = Object.entries(botFlags).filter(([_, value]) => value);
-        if (activeFlags.length >= 2) {
-            botFlags.multipleFlags = true;
-            alert(`🚨 Bot detected! Suspicious activity:\n${activeFlags.map(f => `- ${f[0]}`).join("\n")}`);
-        }
+    // If movement is perfectly linear or repetitive, trigger alert
+    if (samePattern || totalDx === 0 || totalDy === 0) {
+         alert("Bot Detected");
+        document.removeEventListener("mousemove", detectBotMovement); // Stop further detection
     }
-})();
+}
